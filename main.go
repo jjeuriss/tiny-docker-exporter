@@ -91,7 +91,7 @@ func collectMetrics(interval time.Duration) {
 }
 
 func updateMetrics() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -115,44 +115,97 @@ func updateMetrics() {
 	}
 
 	newContainers := make(map[string]*ContainerMetrics, len(containers))
+	
+	// Use a channel to collect results from workers
+	type statsResult struct {
+		name   string
+		metric *ContainerMetrics
+	}
+	
+	// Worker pool for parallel stats collection
+	numWorkers := 4
+	if len(containers) < 4 {
+		numWorkers = len(containers)
+	}
+	
+	resultChan := make(chan statsResult, len(containers))
+	containerChan := make(chan types.Container, len(containers))
+	
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for cont := range containerChan {
+				// Create a fresh client for each worker to avoid sharing state
+				workerCli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+				if err != nil {
+					log.Printf("Error creating worker client: %v", err)
+					continue
+				}
+				
+				// Use a short timeout per container
+				containerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				stats, err := workerCli.ContainerStats(containerCtx, cont.ID, false)
+				cancel()
+				
+				if err != nil {
+					log.Printf("Error getting stats for container %s: %v", cont.Names[0], err)
+					workerCli.Close()
+					continue
+				}
 
-	for _, cont := range containers {
-		// Get stats for this container
-		stats, err := cli.ContainerStats(ctx, cont.ID, false)
-		if err != nil {
-			log.Printf("Error getting stats for container %s: %v", cont.Names[0], err)
-			continue
+				// Parse stats from stream
+				var statData types.StatsJSON
+				if err := json.NewDecoder(stats.Body).Decode(&statData); err != nil {
+					stats.Body.Close()
+					log.Printf("Error parsing stats for container %s: %v", cont.Names[0], err)
+					workerCli.Close()
+					continue
+				}
+				stats.Body.Close()
+
+				cm := &ContainerMetrics{
+					Name:      cont.Names[0],
+					MemUsage:  float64(statData.MemoryStats.Usage),
+					MemLimit:  float64(statData.MemoryStats.Limit),
+					NetIn:     calculateNetIn(&statData),
+					NetOut:    calculateNetOut(&statData),
+					BlockIn:   calculateBlockIn(&statData),
+					BlockOut:  calculateBlockOut(&statData),
+					PIDs:      float64(statData.PidsStats.Current),
+				}
+
+				// Calculate CPU percentage
+				cm.CPUPercent = calculateCPUPercent(&statData)
+
+				// Calculate memory percentage
+				if cm.MemLimit > 0 {
+					cm.MemPercent = (cm.MemUsage / cm.MemLimit) * 100
+				}
+
+				resultChan <- statsResult{name: cont.Names[0], metric: cm}
+				workerCli.Close()
+			}
+		}()
+	}
+	
+	// Send containers to workers
+	go func() {
+		for _, cont := range containers {
+			containerChan <- cont
 		}
-
-		// Parse stats from stream
-		var statData types.StatsJSON
-		if err := json.NewDecoder(stats.Body).Decode(&statData); err != nil {
-			stats.Body.Close()
-			log.Printf("Error parsing stats for container %s: %v", cont.Names[0], err)
-			continue
-		}
-		stats.Body.Close()
-
-		cm := &ContainerMetrics{
-			Name:      cont.Names[0],
-			MemUsage:  float64(statData.MemoryStats.Usage),
-			MemLimit:  float64(statData.MemoryStats.Limit),
-			NetIn:     calculateNetIn(&statData),
-			NetOut:    calculateNetOut(&statData),
-			BlockIn:   calculateBlockIn(&statData),
-			BlockOut:  calculateBlockOut(&statData),
-			PIDs:      float64(statData.PidsStats.Current),
-		}
-
-		// Calculate CPU percentage
-		cm.CPUPercent = calculateCPUPercent(&statData)
-
-		// Calculate memory percentage
-		if cm.MemLimit > 0 {
-			cm.MemPercent = (cm.MemUsage / cm.MemLimit) * 100
-		}
-
-		newContainers[cm.Name] = cm
+		close(containerChan)
+	}()
+	
+	// Wait for workers to finish
+	wg.Wait()
+	close(resultChan)
+	
+	// Collect results
+	for result := range resultChan {
+		newContainers[result.name] = result.metric
 	}
 
 	metrics.mu.Lock()
