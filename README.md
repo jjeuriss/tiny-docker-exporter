@@ -12,15 +12,17 @@ An extremely lightweight Prometheus metrics exporter for Docker container statis
 
 ## Metrics Exposed
 
-- `docker_container_cpu_percent` - CPU percentage
-- `docker_container_memory_usage_bytes` - Current memory usage
-- `docker_container_memory_limit_bytes` - Memory limit
-- `docker_container_memory_percent` - Memory percentage
-- `docker_container_network_input_bytes` - Network input
-- `docker_container_network_output_bytes` - Network output
-- `docker_container_block_input_bytes` - Block device input
-- `docker_container_block_output_bytes` - Block device output
-- `docker_container_pids` - Number of processes
+| Metric | Description |
+|--------|-------------|
+| `docker_container_cpu_percent` | CPU percentage |
+| `docker_container_memory_usage_bytes` | Current memory usage |
+| `docker_container_memory_limit_bytes` | Memory limit |
+| `docker_container_memory_percent` | Memory percentage |
+| `docker_container_network_input_bytes` | Network input bytes |
+| `docker_container_network_output_bytes` | Network output bytes |
+| `docker_container_block_input_bytes` | Block device input bytes |
+| `docker_container_block_output_bytes` | Block device output bytes |
+| `docker_container_pids` | Number of processes |
 
 ## Building
 
