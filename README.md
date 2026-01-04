@@ -43,35 +43,22 @@ A pre-built Grafana dashboard is included for visualizing Docker container metri
 
 ## Running
 
-### Docker Compose (Recommended)
+### Add to Existing Prometheus/Grafana (Recommended)
 
-The included `docker-compose.yml` provides a complete stack with Prometheus and Grafana:
+If you already have Prometheus and Grafana running, add this service to your `docker-compose.yml`:
 
-```bash
-git clone https://github.com/jjeuriss/tiny-docker-exporter.git
-cd tiny-docker-exporter
-docker-compose up -d
+```yaml
+services:
+  tiny-docker-exporter:
+    image: ghcr.io/jjeuriss/tiny-docker-exporter:latest
+    container_name: tiny-docker-exporter
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 100m
 ```
-
-This setup includes:
-- **tiny-docker-exporter** - Metrics on `http://localhost:8010/metrics`
-- **Prometheus** - Time series database on `http://localhost:9090`
-- **Grafana** - Visualization on `http://localhost:3000`
-
-> **Note**: This docker-compose assumes you don't have Prometheus and Grafana already running. If you have an existing Prometheus/Grafana setup, use the Docker Run method below and update your Prometheus scrape config.
-
-### Docker Run
-
-For use with an existing Prometheus/Grafana setup:
-
-```bash
-docker run -d \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -p 8010:8010 \
-  ghcr.io/jjeuriss/tiny-docker-exporter:latest
-```
-
-Metrics are exposed at `http://localhost:8010/metrics`.
 
 Then add to your Prometheus `scrape_configs`:
 
@@ -83,6 +70,36 @@ scrape_configs:
     scrape_interval: 10s
     scrape_timeout: 5s
 ```
+
+> **Assumes**: Prometheus and Grafana are already installed and configured in your environment.
+
+### Complete Stack (New Installation)
+
+If you don't have Prometheus and Grafana yet, use the included `docker-compose.yml`:
+
+```bash
+git clone https://github.com/jjeuriss/tiny-docker-exporter.git
+cd tiny-docker-exporter
+docker-compose up -d
+```
+
+This includes:
+- **tiny-docker-exporter** on port 8010
+- **Prometheus** on port 9090
+- **Grafana** on port 3000 (admin/admin)
+
+### Docker Run
+
+For manual deployment without docker-compose:
+
+```bash
+docker run -d \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 8010:8010 \
+  ghcr.io/jjeuriss/tiny-docker-exporter:latest
+```
+
+Metrics are exposed at `http://localhost:8010/metrics`.
 
 
 ### Configuration
