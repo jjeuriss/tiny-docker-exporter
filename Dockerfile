@@ -2,10 +2,11 @@
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
-COPY go.mod .
+COPY go.mod go.sum ./
+COPY vendor ./vendor
 COPY main.go .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false -ldflags="-s -w" -o exporter .
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -buildvcs=false -ldflags="-s -w" -o exporter .
 
 # Runtime stage - Alpine base for minimal size
 FROM alpine:3.19

@@ -188,6 +188,9 @@ func calculateNetOut(stat *types.StatsJSON) float64 {
 }
 
 func calculateBlockIn(stat *types.StatsJSON) float64 {
+	if len(stat.BlkioStats.IoServiceBytesRecursive) == 0 {
+		return 0
+	}
 	return float64(stat.BlkioStats.IoServiceBytesRecursive[0].Value)
 }
 
