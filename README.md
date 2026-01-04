@@ -40,6 +40,27 @@ docker run -d \
 
 The exporter will listen on port `8010` and expose metrics at `http://localhost:8010/metrics`.
 
+### Configuration
+
+The exporter accepts two optional arguments:
+
+1. **Port** (default: `8010`) - The port to listen on
+2. **Scrape interval** (default: `10`) - Collection interval in seconds
+
+```bash
+# Run on port 9999 with 10 second scrape interval
+docker run -d \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 9999:9999 \
+  tiny-docker-exporter:latest 9999 10
+
+# Run on port 8010 with 30 second scrape interval  
+docker run -d \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -p 8010:8010 \
+  tiny-docker-exporter:latest 8010 30
+```
+
 ## Prometheus Configuration
 
 Add to your `prometheus.yml`:
@@ -58,12 +79,22 @@ A health endpoint is available at `http://localhost:8010/health`.
 ## Performance
 
 - **Image size**: 52.6MB (Alpine Linux + docker CLI + Go binary)
-- **Memory usage**: ~36-37MB while running (measured with 21 monitored containers)
-- **CPU usage**: Minimal (only when collecting stats every 2 seconds)
+- **Memory usage**: ~24MB while running (measured with aggressive GC and 10-second intervals)
+- **CPU usage**: Minimal (only when collecting stats)
 - **Response time**: <20ms for metrics endpoint
-- **Collection interval**: 2 seconds (hardcoded)
-- **Port**: 8010 (default, configurable via command argument: `./exporter 9999`)
+- **Collection interval**: 10 seconds (default, configurable from 1 second up)
+- **Port**: 8010 (default, configurable via command argument)
 - **Containers supported**: Unlimited (tested with 20+ containers)
+
+### Memory Optimizations
+
+The exporter uses several techniques to minimize memory usage while maintaining reliability:
+
+- **Streaming JSON parsing**: Uses pipes and scanners instead of buffering entire output
+- **Direct response writing**: Streams metrics directly to HTTP response without intermediate buffering
+- **Efficient string handling**: Uses fmt.Fprintf for direct output instead of building strings in memory
+- **Configurable scrape intervals**: Reduces frequency of docker stats calls and associated allocations
+- **Aggressive garbage collection**: GOGC=20 forces GC more frequently, combined with explicit runtime.GC() hints after each collection cycle
 
 ## Testing
 

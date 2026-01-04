@@ -14,6 +14,9 @@ FROM docker:latest AS docker-extractor
 # Runtime stage - Alpine base for minimal size
 FROM alpine:3.19
 
+# Aggressive GC to reduce memory footprint
+ENV GOGC=20
+
 # Copy docker CLI from docker image
 COPY --from=docker-extractor /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-extractor /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/

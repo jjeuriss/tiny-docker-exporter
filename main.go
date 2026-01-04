@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,38 +52,53 @@ type DockerStatsJSON struct {
 }
 
 var metrics = &Metrics{
-	containers: make(map[string]*ContainerMetrics),
+	containers: make(map[string]*ContainerMetrics, 32),
 }
 
 func init() {
+	// Aggressive garbage collection to reduce memory footprint
+	debug.SetGCPercent(20)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 }
 
 func main() {
 	port := ":8010"
+	scrapeInterval := 10 * time.Second
+	
 	if len(os.Args) > 1 {
 		port = ":" + os.Args[1]
 	}
+	
+	if len(os.Args) > 2 {
+		if interval, err := strconv.Atoi(os.Args[2]); err == nil && interval > 0 {
+			scrapeInterval = time.Duration(interval) * time.Second
+		}
+	}
 
 	// Start background collector
-	go collectMetrics()
+	go collectMetrics(scrapeInterval)
 
 	// Expose metrics endpoint
 	http.HandleFunc("/metrics", metricsHandler)
 	http.HandleFunc("/health", healthHandler)
 
-	log.Printf("Starting Prometheus exporter on %s\n", port)
+	log.Printf("Starting Prometheus exporter on %s with %d second scrape interval\n", port, int(scrapeInterval.Seconds()))
 	if err := http.ListenAndServe(port, nil); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }
 
-func collectMetrics() {
-	ticker := time.NewTicker(2 * time.Second)
+func collectMetrics(interval time.Duration) {
+	// Initial collection
+	updateMetrics()
+	
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		updateMetrics()
+		// Hint to GC to free memory after collection
+		runtime.GC()
 	}
 }
 
@@ -92,22 +108,22 @@ func updateMetrics() {
 	
 	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "json")
 	
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		log.Printf("Error running docker stats: %v (stderr: %s)", err, stderr.String())
-		metrics.mu.Lock()
-		metrics.lastCollectionTime = time.Time{} // Clear last collection time on error
-		metrics.mu.Unlock()
+	// Use pipes instead of buffering entire output
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Printf("Error creating stdout pipe: %v", err)
 		return
 	}
 
-	newContainers := make(map[string]*ContainerMetrics)
+	if err := cmd.Start(); err != nil {
+		log.Printf("Error starting docker stats: %v", err)
+		return
+	}
+
+	newContainers := make(map[string]*ContainerMetrics, 32)
 	
-	// Parse newline-delimited JSON
-	scanner := bufio.NewScanner(bytes.NewReader(stdout.Bytes()))
+	// Parse newline-delimited JSON directly from pipe
+	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -120,9 +136,7 @@ func updateMetrics() {
 			continue
 		}
 
-		name := stat.Name
-		cm := &ContainerMetrics{Name: name}
-
+		cm := &ContainerMetrics{Name: stat.Name}
 		cm.CPUPercent = parsePercent(stat.CPUPerc)
 		
 		// MemUsage format: "256MiB / 1GiB"
@@ -137,11 +151,20 @@ func updateMetrics() {
 		cm.BlockIn, cm.BlockOut = parseBlockIO(stat.BlockIO)
 		cm.PIDs = parseFloat(stat.PIDs)
 
-		newContainers[name] = cm
+		newContainers[stat.Name] = cm
+	}
+
+	if err := cmd.Wait(); err != nil {
+		log.Printf("Error running docker stats: %v", err)
+		metrics.mu.Lock()
+		metrics.lastCollectionTime = time.Time{} // Clear last collection time on error
+		metrics.mu.Unlock()
+		return
 	}
 
 	metrics.mu.Lock()
 	metrics.containers = newContainers
+	metrics.lastCollectionTime = time.Now()
 	metrics.mu.Unlock()
 }
 
@@ -151,62 +174,51 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	metrics.mu.RLock()
 	defer metrics.mu.RUnlock()
 
-	var output strings.Builder
-	output.WriteString("# HELP docker_container_cpu_percent CPU percentage used by container\n")
-	output.WriteString("# TYPE docker_container_cpu_percent gauge\n")
+	// Single pass - write directly to response without intermediate buffer
+	w.Write([]byte("# HELP docker_container_cpu_percent CPU percentage used by container\n# TYPE docker_container_cpu_percent gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_cpu_percent{container=\"%s\"} %f\n", name, cm.CPUPercent))
+		fmt.Fprintf(w, "docker_container_cpu_percent{container=\"%s\"} %f\n", name, cm.CPUPercent)
 	}
 
-	output.WriteString("\n# HELP docker_container_memory_usage_bytes Memory usage in bytes\n")
-	output.WriteString("# TYPE docker_container_memory_usage_bytes gauge\n")
+	w.Write([]byte("\n# HELP docker_container_memory_usage_bytes Memory usage in bytes\n# TYPE docker_container_memory_usage_bytes gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_memory_usage_bytes{container=\"%s\"} %f\n", name, cm.MemUsage))
+		fmt.Fprintf(w, "docker_container_memory_usage_bytes{container=\"%s\"} %f\n", name, cm.MemUsage)
 	}
 
-	output.WriteString("\n# HELP docker_container_memory_limit_bytes Memory limit in bytes\n")
-	output.WriteString("# TYPE docker_container_memory_limit_bytes gauge\n")
+	w.Write([]byte("# HELP docker_container_memory_limit_bytes Memory limit in bytes\n# TYPE docker_container_memory_limit_bytes gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_memory_limit_bytes{container=\"%s\"} %f\n", name, cm.MemLimit))
+		fmt.Fprintf(w, "docker_container_memory_limit_bytes{container=\"%s\"} %f\n", name, cm.MemLimit)
 	}
 
-	output.WriteString("\n# HELP docker_container_memory_percent Memory percentage\n")
-	output.WriteString("# TYPE docker_container_memory_percent gauge\n")
+	w.Write([]byte("# HELP docker_container_memory_percent Memory percentage\n# TYPE docker_container_memory_percent gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_memory_percent{container=\"%s\"} %f\n", name, cm.MemPercent))
+		fmt.Fprintf(w, "docker_container_memory_percent{container=\"%s\"} %f\n", name, cm.MemPercent)
 	}
 
-	output.WriteString("\n# HELP docker_container_network_input_bytes Network input in bytes\n")
-	output.WriteString("# TYPE docker_container_network_input_bytes gauge\n")
+	w.Write([]byte("# HELP docker_container_network_input_bytes Network input in bytes\n# TYPE docker_container_network_input_bytes gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_network_input_bytes{container=\"%s\"} %f\n", name, cm.NetIn))
+		fmt.Fprintf(w, "docker_container_network_input_bytes{container=\"%s\"} %f\n", name, cm.NetIn)
 	}
 
-	output.WriteString("\n# HELP docker_container_network_output_bytes Network output in bytes\n")
-	output.WriteString("# TYPE docker_container_network_output_bytes gauge\n")
+	w.Write([]byte("# HELP docker_container_network_output_bytes Network output in bytes\n# TYPE docker_container_network_output_bytes gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_network_output_bytes{container=\"%s\"} %f\n", name, cm.NetOut))
+		fmt.Fprintf(w, "docker_container_network_output_bytes{container=\"%s\"} %f\n", name, cm.NetOut)
 	}
 
-	output.WriteString("\n# HELP docker_container_block_input_bytes Block input in bytes\n")
-	output.WriteString("# TYPE docker_container_block_input_bytes gauge\n")
+	w.Write([]byte("# HELP docker_container_block_input_bytes Block input in bytes\n# TYPE docker_container_block_input_bytes gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_block_input_bytes{container=\"%s\"} %f\n", name, cm.BlockIn))
+		fmt.Fprintf(w, "docker_container_block_input_bytes{container=\"%s\"} %f\n", name, cm.BlockIn)
 	}
 
-	output.WriteString("\n# HELP docker_container_block_output_bytes Block output in bytes\n")
-	output.WriteString("# TYPE docker_container_block_output_bytes gauge\n")
+	w.Write([]byte("# HELP docker_container_block_output_bytes Block output in bytes\n# TYPE docker_container_block_output_bytes gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_block_output_bytes{container=\"%s\"} %f\n", name, cm.BlockOut))
+		fmt.Fprintf(w, "docker_container_block_output_bytes{container=\"%s\"} %f\n", name, cm.BlockOut)
 	}
 
-	output.WriteString("\n# HELP docker_container_pids Number of processes\n")
-	output.WriteString("# TYPE docker_container_pids gauge\n")
+	w.Write([]byte("# HELP docker_container_pids Number of processes\n# TYPE docker_container_pids gauge\n"))
 	for name, cm := range metrics.containers {
-		output.WriteString(fmt.Sprintf("docker_container_pids{container=\"%s\"} %f\n", name, cm.PIDs))
+		fmt.Fprintf(w, "docker_container_pids{container=\"%s\"} %f\n", name, cm.PIDs)
 	}
-
-	w.Write([]byte(output.String()))
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
