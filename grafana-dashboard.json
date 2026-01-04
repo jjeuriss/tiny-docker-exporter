@@ -69,7 +69,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "count(docker_container_cpu_percent{container=~\"$container\"})",
+          "expr": "count(docker_container_cpu_percent{container=~\"$container\", job=~\"$job\"})",
           "interval": "",
           "legendFormat": "",
           "refId": "A"
@@ -130,7 +130,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "avg_over_time(docker_container_cpu_percent{container=~\"$container\"}[$range])",
+          "expr": "avg_over_time(docker_container_cpu_percent{container=~\"$container\", job=~\"$job\"}[$range])",
           "instant": true,
           "interval": "",
           "legendFormat": "{{container}}",
@@ -192,7 +192,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "avg_over_time(docker_container_memory_usage_bytes{container=~\"$container\"}[$range])",
+          "expr": "avg_over_time(docker_container_memory_usage_bytes{container=~\"$container\", job=~\"$job\"}[$range])",
           "instant": true,
           "interval": "",
           "legendFormat": "{{container}}",
@@ -275,7 +275,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "docker_container_cpu_percent{container=~\"$container\"}",
+          "expr": "docker_container_cpu_percent{container=~\"$container\", job=~\"$job\"}",
           "interval": "",
           "legendFormat": "{{container}}",
           "refId": "A"
@@ -358,7 +358,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "docker_container_memory_usage_bytes{container=~\"$container\"}",
+          "expr": "docker_container_memory_usage_bytes{container=~\"$container\", job=~\"$job\"}",
           "interval": "",
           "legendFormat": "{{container}}",
           "refId": "A"
@@ -440,14 +440,14 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "rate(docker_container_network_input_bytes{container=~\"$container\"}[$range])",
+          "expr": "rate(docker_container_network_input_bytes{container=~\"$container\", job=~\"$job\"}[$range])",
           "interval": "",
           "legendFormat": "rx - {{container}}",
           "refId": "A"
         },
         {
           "exemplar": true,
-          "expr": "-rate(docker_container_network_output_bytes{container=~\"$container\"}[$range])",
+          "expr": "-rate(docker_container_network_output_bytes{container=~\"$container\", job=~\"$job\"}[$range])",
           "hide": false,
           "interval": "",
           "legendFormat": "tx - {{container}}",
@@ -530,14 +530,14 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "rate(docker_container_block_input_bytes{container=~\"$container\"}[$range])",
+          "expr": "rate(docker_container_block_input_bytes{container=~\"$container\", job=~\"$job\"}[$range])",
           "interval": "",
           "legendFormat": "read - {{container}}",
           "refId": "A"
         },
         {
           "exemplar": true,
-          "expr": "-rate(docker_container_block_output_bytes{container=~\"$container\"}[$range])",
+          "expr": "-rate(docker_container_block_output_bytes{container=~\"$container\", job=~\"$job\"}[$range])",
           "hide": false,
           "interval": "",
           "legendFormat": "write - {{container}}",
@@ -619,7 +619,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "docker_container_pids{container=~\"$container\"}",
+          "expr": "docker_container_pids{container=~\"$container\", job=~\"$job\"}",
           "interval": "",
           "legendFormat": "{{container}}",
           "refId": "A"
