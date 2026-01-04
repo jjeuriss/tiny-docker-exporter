@@ -22,6 +22,7 @@ import (
 type Metrics struct {
 	mu                 sync.RWMutex
 	containers         map[string]*ContainerMetrics
+	previousStats      map[string]*types.StatsJSON // Cache previous stats for CPU delta calculation
 	lastCollectionTime time.Time
 }
 
@@ -40,7 +41,8 @@ type ContainerMetrics struct {
 }
 
 var metrics = &Metrics{
-	containers: make(map[string]*ContainerMetrics, 32),
+	containers:    make(map[string]*ContainerMetrics, 32),
+	previousStats: make(map[string]*types.StatsJSON, 32),
 }
 
 func init() {
@@ -168,8 +170,14 @@ func updateMetrics() {
 				}
 				stats.Body.Close()
 
+				// Clean container name by removing leading slash
+				cleanName := cont.Names[0]
+				if len(cleanName) > 0 && cleanName[0] == '/' {
+					cleanName = cleanName[1:]
+				}
+
 				cm := &ContainerMetrics{
-					Name:      cont.Names[0],
+					Name:      cleanName,
 					MemUsage:  float64(statData.MemoryStats.Usage),
 					MemLimit:  float64(statData.MemoryStats.Limit),
 					NetIn:     calculateNetIn(&statData),
@@ -179,15 +187,20 @@ func updateMetrics() {
 					PIDs:      float64(statData.PidsStats.Current),
 				}
 
-				// Calculate CPU percentage
-				cm.CPUPercent = calculateCPUPercent(&statData)
+				// Calculate CPU percentage using cached previous stats
+				cm.CPUPercent = calculateCPUPercent(&statData, cont.ID)
 
 				// Calculate memory percentage
 				if cm.MemLimit > 0 {
 					cm.MemPercent = (cm.MemUsage / cm.MemLimit) * 100
 				}
 
-				resultChan <- statsResult{name: cont.Names[0], metric: cm}
+				resultChan <- statsResult{name: cleanName, metric: cm}
+				
+				// Cache current stats for next collection cycle
+				statsCopy := statData // Shallow copy
+				metrics.previousStats[cont.ID] = &statsCopy
+				
 				workerCli.Close()
 			}
 		}()
@@ -221,13 +234,33 @@ func updateMetrics() {
 	metrics.mu.Unlock()
 }
 
-func calculateCPUPercent(stat *types.StatsJSON) float64 {
+func calculateCPUPercent(stat *types.StatsJSON, containerID string) float64 {
 	cpuPercent := 0.0
-	cpuDelta := float64(stat.CPUStats.CPUUsage.TotalUsage - stat.PreCPUStats.CPUUsage.TotalUsage)
-	systemDelta := float64(stat.CPUStats.SystemUsage - stat.PreCPUStats.SystemUsage)
-	if systemDelta > 0.0 {
-		cpuPercent = (cpuDelta / systemDelta) * float64(len(stat.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+	
+	// Use cached previous stats for meaningful delta calculation
+	prevStat, hasPrev := metrics.previousStats[containerID]
+	if !hasPrev {
+		// No previous stats yet, return 0
+		return 0.0
 	}
+	
+	cpuDelta := float64(stat.CPUStats.CPUUsage.TotalUsage - prevStat.CPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(stat.CPUStats.SystemUsage - prevStat.CPUStats.SystemUsage)
+	
+	if systemDelta > 0.0 && cpuDelta >= 0.0 {
+		// On some systems (particularly ARM), OnlineCPUs and PercpuUsage may be empty.
+		// Use the number of CPUs from OnlineCPUs, fallback to the length of PercpuUsage.
+		// If both are unavailable, the system likely has 1 CPU or stats aren't being reported.
+		numCPUs := stat.CPUStats.OnlineCPUs
+		if numCPUs == 0 {
+			numCPUs = uint32(len(stat.CPUStats.CPUUsage.PercpuUsage))
+		}
+		if numCPUs == 0 {
+			numCPUs = 1 // Fallback: assume 1 CPU
+		}
+		cpuPercent = (cpuDelta / systemDelta) * float64(numCPUs) * 100.0
+	}
+	
 	return cpuPercent
 }
 
