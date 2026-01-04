@@ -91,7 +91,7 @@ func collectMetrics(interval time.Duration) {
 }
 
 func updateMetrics() {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -123,8 +123,8 @@ func updateMetrics() {
 	}
 	
 	// Worker pool for parallel stats collection
-	numWorkers := 4
-	if len(containers) < 4 {
+	numWorkers := 8
+	if len(containers) < 8 {
 		numWorkers = len(containers)
 	}
 	
@@ -146,7 +146,7 @@ func updateMetrics() {
 				}
 				
 				// Use a short timeout per container
-				containerCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			containerCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				stats, err := workerCli.ContainerStats(containerCtx, cont.ID, false)
 				cancel()
 				
