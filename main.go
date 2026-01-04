@@ -149,8 +149,9 @@ func updateMetrics() {
 					continue
 				}
 				
-				// Use a very long timeout per container (45s) to handle slow daemon responses
-			containerCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+				// Respect parent context deadline to avoid timeout bypass
+				// Set per-container timeout but don't exceed overall deadline
+				containerCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 				stats, err := workerCli.ContainerStats(containerCtx, cont.ID, false)
 				cancel()
 				
@@ -187,8 +188,10 @@ func updateMetrics() {
 					PIDs:      float64(statData.PidsStats.Current),
 				}
 
-				// Calculate CPU percentage using cached previous stats
+				// Calculate CPU percentage using cached previous stats (thread-safe)
+				metrics.mu.RLock()
 				cm.CPUPercent = calculateCPUPercent(&statData, cont.ID)
+				metrics.mu.RUnlock()
 
 				// Calculate memory percentage
 				if cm.MemLimit > 0 {
@@ -197,17 +200,21 @@ func updateMetrics() {
 
 				resultChan <- statsResult{name: cleanName, metric: cm}
 				
-				// Cache current stats for next collection cycle
+				// Cache current stats for next collection cycle (thread-safe)
 				statsCopy := statData // Shallow copy
+				metrics.mu.Lock()
 				metrics.previousStats[cont.ID] = &statsCopy
+				metrics.mu.Unlock()
 				
 				workerCli.Close()
 			}
 		}()
 	}
 	
-	// Send containers to workers
+	// Send containers to workers (include sender goroutine in waitgroup to prevent leak)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for _, cont := range containers {
 			containerChan <- cont
 		}

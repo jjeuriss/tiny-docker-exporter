@@ -5,7 +5,7 @@ set -e
 
 EXPORTER_URL="http://localhost:8010"
 EXPORTER_CONTAINER="test-exporter"
-IMAGE_NAME="tiny-docker-exporter:latest"
+IMAGE_NAME="tiny-docker-exporter:test"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,8 +40,8 @@ docker run -d --name $EXPORTER_CONTAINER \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -p 8010:8010 \
     $IMAGE_NAME > /dev/null 2>&1 || fail "Failed to start container"
-echo "Waiting for metrics collection (first collection takes 2 seconds)..."
-sleep 5
+echo "Waiting for metrics collection to complete (first collection takes ~10 seconds)..."
+sleep 12
 pass "Container started successfully"
 
 # Test 3: Container health check
@@ -52,6 +52,7 @@ pass "Health endpoint responds with OK"
 
 # Test 4: Metrics endpoint responds
 echo -e "\n=== TEST 4: Metrics Endpoint Responds ==="
+# Already waited for second collection cycle in TEST 2, so just fetch metrics
 METRICS=$(curl -s "$EXPORTER_URL/metrics")
 [[ -n "$METRICS" ]] || fail "Metrics endpoint returned empty response"
 pass "Metrics endpoint is responding"
@@ -117,6 +118,37 @@ if [[ $MEM_METRICS -gt 0 ]]; then
     pass "Memory metrics have non-zero values ($MEM_METRICS containers)"
 else
     warn "No containers with non-zero memory usage found"
+fi
+
+# Test 10b: CPU metrics not all zero (critical check for zero-metrics bug)
+echo -e "\n=== TEST 10b: CPU Metrics Not All Zero ==="
+# Wait for second collection cycle to complete
+# First collection: 0-12s, second starts at ~20s and takes ~12s to complete
+# So we need to wait at least 35-40 seconds from container start
+# Since we already waited 12s in TEST 2, wait additional 28s here for safety (total ~40s)
+echo "  Waiting for second collection cycle for CPU delta calculation..."
+sleep 28
+METRICS=$(curl -s "$EXPORTER_URL/metrics")
+CPU_ZERO_COUNT=$(echo "$METRICS" | grep "^docker_container_cpu_percent{" | grep -c "} 0\.0*$" || true)
+CPU_TOTAL=$(echo "$METRICS" | grep -c "^docker_container_cpu_percent{" || true)
+echo "  Total CPU metrics: $CPU_TOTAL"
+echo "  Zero CPU metrics: $CPU_ZERO_COUNT"
+if [[ $CPU_TOTAL -gt 0 && $CPU_ZERO_COUNT -lt $CPU_TOTAL ]]; then
+    pass "At least some containers have non-zero CPU metrics"
+else
+    # Log sample metrics for debugging
+    echo "  Sample CPU metrics:"
+    echo "$METRICS" | grep "^docker_container_cpu_percent{" | head -3
+    fail "All CPU metrics are zero - metrics calculation failure"
+fi
+
+# Test 10c: Container names don't have leading slashes (label format check)
+echo -e "\n=== TEST 10c: Container Label Format ==="
+BAD_LABELS=$(echo "$METRICS" | grep -c 'container="/' || true)
+if [[ $BAD_LABELS -eq 0 ]]; then
+    pass "All container labels have clean format (no leading slashes)"
+else
+    fail "Found $BAD_LABELS container labels with leading slashes"
 fi
 
 # Test 11: Container runtime memory check
