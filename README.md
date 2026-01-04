@@ -24,15 +24,28 @@ An extremely lightweight Prometheus metrics exporter for Docker container statis
 | `docker_container_block_output_bytes` | Block device output bytes |
 | `docker_container_pids` | Number of processes |
 
-## Building
+## Grafana Dashboard
 
-```bash
-docker build -t tiny-docker-exporter:latest .
-```
+A pre-built Grafana dashboard is included for visualizing Docker container metrics. See [GRAFANA_SETUP.md](./GRAFANA_SETUP.md) for complete setup instructions.
+
+![Grafana Dashboard Preview](./Grafana-dashboard.png)
+
+**Dashboard features**:
+- Running container count (stat panel)
+- CPU usage pie charts (last $range average) and time series (real-time)
+- Memory usage pie charts (last $range average) and time series (real-time)
+- Network I/O graphs (input/output bytes with rate analysis)
+- Block I/O graphs (input/output bytes with rate analysis)
+- Process count trends (PIDs over time)
+- Multi-container filtering via dropdown variable
+- Adjustable time range analysis ($range variable)
+- Shared tooltip on hover across all panels for correlation
 
 ## Running
 
 ### Docker Compose (Recommended)
+
+The included `docker-compose.yml` provides a complete stack with Prometheus and Grafana:
 
 ```bash
 git clone https://github.com/jjeuriss/tiny-docker-exporter.git
@@ -40,7 +53,16 @@ cd tiny-docker-exporter
 docker-compose up -d
 ```
 
+This setup includes:
+- **tiny-docker-exporter** - Metrics on `http://localhost:8010/metrics`
+- **Prometheus** - Time series database on `http://localhost:9090`
+- **Grafana** - Visualization on `http://localhost:3000`
+
+> **Note**: This docker-compose assumes you don't have Prometheus and Grafana already running. If you have an existing Prometheus/Grafana setup, use the Docker Run method below and update your Prometheus scrape config.
+
 ### Docker Run
+
+For use with an existing Prometheus/Grafana setup:
 
 ```bash
 docker run -d \
@@ -50,6 +72,18 @@ docker run -d \
 ```
 
 Metrics are exposed at `http://localhost:8010/metrics`.
+
+Then add to your Prometheus `scrape_configs`:
+
+```yaml
+scrape_configs:
+  - job_name: 'tiny-docker-exporter'
+    static_configs:
+      - targets: ['localhost:8010']
+    scrape_interval: 10s
+    scrape_timeout: 5s
+```
+
 
 ### Configuration
 
@@ -87,12 +121,21 @@ scrape_configs:
 
 A health endpoint is available at `http://localhost:8010/health`.
 
-## Performance
 
-- **Memory**: 6-9MB with 10-second scrape interval (monitoring 20+ containers)
-- **Response time**: <20ms per metrics request
-- **Image size**: 15.2MB (Alpine Linux base)
-- **Supports**: Unlimited containers (tested with 20+)
+## Building from Source
+
+```bash
+git clone https://github.com/jjeuriss/tiny-docker-exporter.git
+cd tiny-docker-exporter
+docker build -t tiny-docker-exporter:latest .
+```
+
+
+## Building
+
+```bash
+docker build -t tiny-docker-exporter:latest .
+```
 
 ## Testing
 
@@ -114,60 +157,10 @@ The test suite verifies:
 - Response time is acceptable
 - All running containers are discovered and monitored
 
-## Building from Source
-
-```bash
-git clone https://github.com/jjeuriss/tiny-docker-exporter.git
-cd tiny-docker-exporter
-docker build -t tiny-docker-exporter:latest .
-```
-
-## Docker Compose Example
-
-```yaml
-services:
-  tiny-docker-exporter:
-    image: ghcr.io/jjeuriss/tiny-docker-exporter:latest
-    container_name: tiny-docker-exporter
-    restart: unless-stopped
-    ports:
-      - "8010:8010"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    mem_limit: 100m
-```
-
-Then add to your Prometheus `scrape_configs`:
-
-```yaml
-scrape_configs:
-  - job_name: 'tiny-docker-exporter'
-    static_configs:
-      - targets: ['localhost:8010']
-    scrape_interval: 10s
-    scrape_timeout: 5s
-```
-
-## Grafana Dashboard
-
-A pre-built Grafana dashboard is included for visualizing Docker container metrics. See [GRAFANA_SETUP.md](./GRAFANA_SETUP.md) for complete setup instructions.
-
-![Grafana Dashboard Preview](./Grafana-dashboard.png)
-
-**Dashboard features**:
-- Running container count (stat panel)
-- CPU usage pie charts (last $range average) and time series (real-time)
-- Memory usage pie charts (last $range average) and time series (real-time)
-- Network I/O graphs (input/output bytes with rate analysis)
-- Block I/O graphs (input/output bytes with rate analysis)
-- Process count trends (PIDs over time)
-- Multi-container filtering via dropdown variable
-- Adjustable time range analysis ($range variable)
-- Shared tooltip on hover across all panels for correlation
 
 ## Contributing
 
-Contributions welcome! Please feel free to submit PRs or open issues.
+Contributions are welcome! Please feel free to submit PRs or open issues.
 
 ## License
 
