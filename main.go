@@ -1,20 +1,21 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/client"
 )
 
 // Metrics holds parsed docker stats
@@ -36,19 +37,6 @@ type ContainerMetrics struct {
 	BlockIn    float64
 	BlockOut   float64
 	PIDs       float64
-}
-
-// DockerStatsJSON is the structure returned by docker stats --format json
-type DockerStatsJSON struct {
-	Container string `json:"Container"`
-	Name      string `json:"Name"`
-	CPUPerc   string `json:"CPUPerc"`
-	MemUsage  string `json:"MemUsage"`
-	MemLimit  string `json:"MemLimit"`
-	MemPerc   string `json:"MemPerc"`
-	NetIO     string `json:"NetIO"`
-	BlockIO   string `json:"BlockIO"`
-	PIDs      string `json:"PIDs"`
 }
 
 var metrics = &Metrics{
@@ -106,66 +94,108 @@ func updateMetrics() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	
-	cmd := exec.CommandContext(ctx, "docker", "stats", "--no-stream", "--format", "json")
-	
-	// Use pipes instead of buffering entire output
-	stdout, err := cmd.StdoutPipe()
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
-		log.Printf("Error creating stdout pipe: %v", err)
-		return
-	}
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("Error starting docker stats: %v", err)
-		return
-	}
-
-	newContainers := make(map[string]*ContainerMetrics, 32)
-	
-	// Parse newline-delimited JSON directly from pipe
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		
-		var stat DockerStatsJSON
-		if err := json.Unmarshal(line, &stat); err != nil {
-			log.Printf("Error parsing docker stats JSON: %v", err)
-			continue
-		}
-
-		cm := &ContainerMetrics{Name: stat.Name}
-		cm.CPUPercent = parsePercent(stat.CPUPerc)
-		
-		// MemUsage format: "256MiB / 1GiB"
-		memParts := strings.Split(stat.MemUsage, "/")
-		if len(memParts) == 2 {
-			cm.MemUsage = parseBytes(strings.TrimSpace(memParts[0]))
-			cm.MemLimit = parseBytes(strings.TrimSpace(memParts[1]))
-		}
-		
-		cm.MemPercent = parsePercent(stat.MemPerc)
-		cm.NetIn, cm.NetOut = parseNetIO(stat.NetIO)
-		cm.BlockIn, cm.BlockOut = parseBlockIO(stat.BlockIO)
-		cm.PIDs = parseFloat(stat.PIDs)
-
-		newContainers[stat.Name] = cm
-	}
-
-	if err := cmd.Wait(); err != nil {
-		log.Printf("Error running docker stats: %v", err)
+		log.Printf("Error creating Docker client: %v", err)
 		metrics.mu.Lock()
-		metrics.lastCollectionTime = time.Time{} // Clear last collection time on error
+		metrics.lastCollectionTime = time.Time{}
 		metrics.mu.Unlock()
 		return
+	}
+	defer cli.Close()
+
+	// List all containers
+	containers, err := cli.ContainerList(ctx, container.ListOptions{})
+	if err != nil {
+		log.Printf("Error listing containers: %v", err)
+		metrics.mu.Lock()
+		metrics.lastCollectionTime = time.Time{}
+		metrics.mu.Unlock()
+		return
+	}
+
+	newContainers := make(map[string]*ContainerMetrics, len(containers))
+
+	for _, cont := range containers {
+		// Get stats for this container
+		stats, err := cli.ContainerStats(ctx, cont.ID, false)
+		if err != nil {
+			log.Printf("Error getting stats for container %s: %v", cont.Names[0], err)
+			continue
+		}
+
+		// Parse stats from stream
+		var statData types.StatsJSON
+		if err := json.NewDecoder(stats.Body).Decode(&statData); err != nil {
+			stats.Body.Close()
+			log.Printf("Error parsing stats for container %s: %v", cont.Names[0], err)
+			continue
+		}
+		stats.Body.Close()
+
+		cm := &ContainerMetrics{
+			Name:      cont.Names[0],
+			MemUsage:  float64(statData.MemoryStats.Usage),
+			MemLimit:  float64(statData.MemoryStats.Limit),
+			NetIn:     calculateNetIn(&statData),
+			NetOut:    calculateNetOut(&statData),
+			BlockIn:   calculateBlockIn(&statData),
+			BlockOut:  calculateBlockOut(&statData),
+			PIDs:      float64(statData.PidsStats.Current),
+		}
+
+		// Calculate CPU percentage
+		cm.CPUPercent = calculateCPUPercent(&statData)
+
+		// Calculate memory percentage
+		if cm.MemLimit > 0 {
+			cm.MemPercent = (cm.MemUsage / cm.MemLimit) * 100
+		}
+
+		newContainers[cm.Name] = cm
 	}
 
 	metrics.mu.Lock()
 	metrics.containers = newContainers
 	metrics.lastCollectionTime = time.Now()
 	metrics.mu.Unlock()
+}
+
+func calculateCPUPercent(stat *types.StatsJSON) float64 {
+	cpuPercent := 0.0
+	cpuDelta := float64(stat.CPUStats.CPUUsage.TotalUsage - stat.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(stat.CPUStats.SystemUsage - stat.PreCPUStats.SystemUsage)
+	if systemDelta > 0.0 {
+		cpuPercent = (cpuDelta / systemDelta) * float64(len(stat.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+	}
+	return cpuPercent
+}
+
+func calculateNetIn(stat *types.StatsJSON) float64 {
+	var sum uint64
+	for _, net := range stat.Networks {
+		sum += net.RxBytes
+	}
+	return float64(sum)
+}
+
+func calculateNetOut(stat *types.StatsJSON) float64 {
+	var sum uint64
+	for _, net := range stat.Networks {
+		sum += net.TxBytes
+	}
+	return float64(sum)
+}
+
+func calculateBlockIn(stat *types.StatsJSON) float64 {
+	return float64(stat.BlkioStats.IoServiceBytesRecursive[0].Value)
+}
+
+func calculateBlockOut(stat *types.StatsJSON) float64 {
+	if len(stat.BlkioStats.IoServiceBytesRecursive) < 2 {
+		return 0
+	}
+	return float64(stat.BlkioStats.IoServiceBytesRecursive[1].Value)
 }
 
 func metricsHandler(w http.ResponseWriter, r *http.Request) {
@@ -242,83 +272,4 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
-}
-
-// parsePercent extracts percentage from strings like "12.34%"
-func parsePercent(s string) float64 {
-	s = strings.TrimSuffix(strings.TrimSpace(s), "%")
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f
-	}
-	return 0
-}
-
-// parseBytes converts byte strings like "256MiB", "1.5GB", "512kB" to bytes
-func parseBytes(s string) float64 {
-	s = strings.TrimSpace(s)
-	
-	units := map[string]float64{
-		"b":   1,
-		"kb":  1000,
-		"mb":  1000 * 1000,
-		"gb":  1000 * 1000 * 1000,
-		"tb":  1000 * 1000 * 1000 * 1000,
-		"kib": 1024,
-		"mib": 1024 * 1024,
-		"gib": 1024 * 1024 * 1024,
-		"tib": 1024 * 1024 * 1024 * 1024,
-	}
-
-	// Find where the numeric part ends
-	endIdx := 0
-	for i, ch := range s {
-		if (ch >= '0' && ch <= '9') || ch == '.' {
-			endIdx = i + 1
-		} else {
-			break
-		}
-	}
-
-	if endIdx == 0 {
-		return 0
-	}
-
-	num, err := strconv.ParseFloat(s[:endIdx], 64)
-	if err != nil {
-		return 0
-	}
-
-	unit := strings.ToLower(strings.TrimSpace(s[endIdx:]))
-	if multiplier, ok := units[unit]; ok {
-		return num * multiplier
-	}
-
-	return 0
-}
-
-// parseNetIO parses "123.5MB / 456.7MB" format
-func parseNetIO(s string) (in, out float64) {
-	parts := strings.Split(s, "/")
-	if len(parts) != 2 {
-		return 0, 0
-	}
-	in = parseBytes(strings.TrimSpace(parts[0]))
-	out = parseBytes(strings.TrimSpace(parts[1]))
-	return
-}
-
-// parseBlockIO parses "123.5MB / 456.7MB" format
-func parseBlockIO(s string) (in, out float64) {
-	parts := strings.Split(s, "/")
-	if len(parts) != 2 {
-		return 0, 0
-	}
-	in = parseBytes(strings.TrimSpace(parts[0]))
-	out = parseBytes(strings.TrimSpace(parts[1]))
-	return
-}
-
-func parseFloat(s string) float64 {
-	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	return f
 }
