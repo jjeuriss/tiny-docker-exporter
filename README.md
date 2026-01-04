@@ -4,12 +4,11 @@ An extremely lightweight Prometheus metrics exporter for Docker container statis
 
 ## Features
 
-- **Minimal footprint**: ~52.6MB Docker image (Alpine + docker CLI + compiled Go binary)
-- **Zero external Go dependencies**: Uses only Go standard library
-- **Prometheus-compatible**: Exposes metrics in standard Prometheus text format
-- **Low resource usage**: ~10-15MB memory per exporter container
-- **Fast**: Sub-20ms response time for metrics endpoint
-- **Comprehensive**: 9 metrics per container covering CPU, memory, network, I/O, and process counts
+- **Minimal footprint**: ~52.6MB Docker image with zero external Go dependencies
+- **Low memory**: 19-25MB while monitoring 20+ containers (45% reduction from original)
+- **Prometheus-compatible**: Exposes metrics in standard Prometheus text format with sub-20ms response time
+- **Comprehensive metrics**: CPU, memory, network I/O, block I/O, and process counts per container
+- **Configurable**: Adjustable scrape interval (default 10s) and port for flexible deployments
 
 ## Metrics Exposed
 
@@ -31,14 +30,24 @@ docker build -t tiny-docker-exporter:latest .
 
 ## Running
 
+### Docker Compose (Recommended)
+
+```bash
+git clone https://github.com/jjeuriss/tiny-docker-exporter.git
+cd tiny-docker-exporter
+docker-compose up -d
+```
+
+### Docker Run
+
 ```bash
 docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -p 8010:8010 \
-  tiny-docker-exporter:latest
+  ghcr.io/jjeuriss/tiny-docker-exporter:latest
 ```
 
-The exporter will listen on port `8010` and expose metrics at `http://localhost:8010/metrics`.
+Metrics are exposed at `http://localhost:8010/metrics`.
 
 ### Configuration
 
@@ -78,25 +87,18 @@ A health endpoint is available at `http://localhost:8010/health`.
 
 ## Performance
 
-- **Image size**: 52.6MB (Alpine Linux + docker CLI + Go binary)
-- **Memory usage**: 19-25MB while running (measured with aggressive GC and 10-second intervals, monitoring 20+ containers)
-- **CPU usage**: Minimal (only when collecting stats)
-- **Response time**: <20ms for metrics endpoint
-- **Collection interval**: 10 seconds (default, configurable from 1 second up)
-- **Port**: 8010 (default, configurable via command argument)
-- **Containers supported**: Unlimited (tested with 20+ containers)
+- **Memory**: 19-25MB with 10-second scrape interval (monitoring 20+ containers)
+- **Response time**: <20ms per metrics request
+- **CPU**: Minimal overhead
+- **Supports**: Unlimited containers (tested with 20+)
 
-### Memory Optimizations
+### Optimizations
 
-The exporter uses several techniques to minimize memory usage while maintaining reliability:
-
-- **Streaming JSON parsing**: Uses pipes and scanners instead of buffering entire output
-- **Direct response writing**: Streams metrics directly to HTTP response without intermediate buffering
-- **Efficient string handling**: Uses fmt.Fprintf for direct output instead of building strings in memory
-- **Configurable scrape intervals**: Reduces frequency of docker stats calls and associated allocations
-- **Aggressive garbage collection**: GOGC=20 forces GC more frequently, combined with explicit runtime.GC() hints after each collection cycle
-
-**Memory improvement**: ~45% reduction compared to original (from ~36MB to 19-25MB)
+- Streaming JSON parsing (no buffering)
+- Direct response writing
+- Aggressive GC (GOGC=20)
+- Configurable scrape interval (default 10s, min 1s)
+- **Result**: 45% memory reduction vs. original (36MB → 19-25MB)
 
 ## Testing
 
