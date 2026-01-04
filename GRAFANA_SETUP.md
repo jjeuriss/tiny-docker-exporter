@@ -2,6 +2,8 @@
 
 This guide explains how to import the tiny-docker-exporter dashboard into Grafana and configure Prometheus to scrape metrics.
 
+![Grafana Dashboard Preview](./Grafana-dashboard.png)
+
 ## Contents
 
 1. [Prerequisites](#prerequisites)

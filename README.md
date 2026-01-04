@@ -123,6 +123,8 @@ scrape_configs:
 
 A pre-built Grafana dashboard is included for visualizing Docker container metrics. See [GRAFANA_SETUP.md](./GRAFANA_SETUP.md) for complete setup instructions.
 
+![Grafana Dashboard Preview](./Grafana-dashboard.png)
+
 **Dashboard features**:
 - Running container count (stat panel)
 - CPU usage pie charts (last $range average) and time series (real-time)
