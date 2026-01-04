@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  docker-exporter:
+  tiny-docker-exporter:
     image: ghcr.io/jjeuriss/tiny-docker-exporter:latest
-    container_name: docker-exporter
+    container_name: tiny-docker-exporter
     restart: unless-stopped
     ports:
       - "8010:8010"

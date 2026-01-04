@@ -76,7 +76,7 @@ Add to your `prometheus.yml`:
 
 ```yaml
 scrape_configs:
-  - job_name: 'docker-exporter'
+  - job_name: 'tiny-docker-exporter'
     static_configs:
       - targets: ['localhost:8010']
 ```
@@ -132,9 +132,9 @@ docker build -t tiny-docker-exporter:latest .
 
 ```yaml
 services:
-  docker-exporter:
+  tiny-docker-exporter:
     image: ghcr.io/jjeuriss/tiny-docker-exporter:latest
-    container_name: docker-exporter
+    container_name: tiny-docker-exporter
     restart: unless-stopped
     ports:
       - "8010:8010"
@@ -147,7 +147,7 @@ Then add to your Prometheus `scrape_configs`:
 
 ```yaml
 scrape_configs:
-  - job_name: 'docker-exporter'
+  - job_name: 'tiny-docker-exporter'
     static_configs:
       - targets: ['localhost:8010']
     scrape_interval: 10s

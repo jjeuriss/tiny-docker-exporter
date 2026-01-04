@@ -35,7 +35,7 @@ global:
 scrape_configs:
   # ... existing configs ...
 
-  - job_name: 'docker-exporter'
+  - job_name: 'tiny-docker-exporter'
     scrape_interval: 10s
     scrape_timeout: 5s
     static_configs:
