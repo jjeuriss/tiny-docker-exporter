@@ -91,7 +91,8 @@ func collectMetrics(interval time.Duration) {
 }
 
 func updateMetrics() {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	log.Printf("Starting metrics collection cycle...")
+	ctx, cancel := context.WithTimeout(context.Background(), 210*time.Second)
 	defer cancel()
 	
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -123,8 +124,9 @@ func updateMetrics() {
 	}
 	
 	// Worker pool for parallel stats collection
-	numWorkers := 8
-	if len(containers) < 8 {
+	// Use fewer workers with longer timeouts to avoid overwhelming the daemon
+	numWorkers := 4
+	if len(containers) < 4 {
 		numWorkers = len(containers)
 	}
 	
@@ -145,8 +147,8 @@ func updateMetrics() {
 					continue
 				}
 				
-				// Use a short timeout per container
-			containerCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				// Use a very long timeout per container (45s) to handle slow daemon responses
+			containerCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 				stats, err := workerCli.ContainerStats(containerCtx, cont.ID, false)
 				cancel()
 				
@@ -206,6 +208,11 @@ func updateMetrics() {
 	// Collect results
 	for result := range resultChan {
 		newContainers[result.name] = result.metric
+	}
+
+	log.Printf("Successfully collected stats from %d containers", len(newContainers))
+	if len(newContainers) == 0 {
+		log.Printf("WARNING: No container stats collected!")
 	}
 
 	metrics.mu.Lock()
