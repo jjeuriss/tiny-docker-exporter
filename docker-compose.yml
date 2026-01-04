@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   tiny-docker-exporter:
     image: ghcr.io/jjeuriss/tiny-docker-exporter:latest
