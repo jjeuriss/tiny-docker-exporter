@@ -4,10 +4,10 @@ An extremely lightweight Prometheus metrics exporter for Docker container statis
 
 ## Features
 
-- **Minimal footprint**: ~52.6MB Docker image with zero external Go dependencies
-- **Low memory**: 19-25MB while monitoring 20+ containers (45% reduction from original)
-- **Prometheus-compatible**: Exposes metrics in standard Prometheus text format with sub-20ms response time
-- **Comprehensive metrics**: CPU, memory, network I/O, block I/O, and process counts per container
+- **Lightweight**: 15.2MB Docker image, 6-9MB memory usage at runtime
+- **Fast**: <20ms response time for metrics requests
+- **Comprehensive**: CPU, memory, network I/O, block I/O, and process counts per container
+- **Prometheus-compatible**: Standard text format, works with Prometheus, Grafana, and other tools
 - **Configurable**: Adjustable scrape interval (default 10s) and port for flexible deployments
 
 ## Metrics Exposed
@@ -87,18 +87,10 @@ A health endpoint is available at `http://localhost:8010/health`.
 
 ## Performance
 
-- **Memory**: 19-25MB with 10-second scrape interval (monitoring 20+ containers)
+- **Memory**: 6-9MB with 10-second scrape interval (monitoring 20+ containers)
 - **Response time**: <20ms per metrics request
-- **CPU**: Minimal overhead
+- **Image size**: 15.2MB (Alpine Linux base)
 - **Supports**: Unlimited containers (tested with 20+)
-
-### Optimizations
-
-- Streaming JSON parsing (no buffering)
-- Direct response writing
-- Aggressive GC (GOGC=20)
-- Configurable scrape interval (default 10s, min 1s)
-- **Result**: 45% memory reduction vs. original (36MB → 19-25MB)
 
 ## Testing
 
