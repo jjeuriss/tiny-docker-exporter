@@ -93,7 +93,6 @@ func collectMetrics(interval time.Duration) {
 }
 
 func updateMetrics() {
-	log.Printf("Starting metrics collection cycle...")
 	ctx, cancel := context.WithTimeout(context.Background(), 210*time.Second)
 	defer cancel()
 	
@@ -230,7 +229,7 @@ func updateMetrics() {
 		newContainers[result.name] = result.metric
 	}
 
-	log.Printf("Successfully collected stats from %d containers", len(newContainers))
+	// Only log if there's an issue
 	if len(newContainers) == 0 {
 		log.Printf("WARNING: No container stats collected!")
 	}
